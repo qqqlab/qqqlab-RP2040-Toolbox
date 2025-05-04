@@ -1,0 +1,20 @@
+.pio_version 0    ; only requires PIO version 0
+
+.program blink
+    pull block    ; wait for fifo input of delay time
+    out y, 32     ; move 32 bits from fifo to y
+
+.wrap_target
+    set pins, 1   ; Turn LED on
+
+    mov x, y      ; Delay for (x + 1) cycles, x is a 32 bit number
+loop1:
+    jmp x-- loop1 
+
+    set pins, 0   ; Turn LED off
+
+    mov x, y      ; Delay for the same number of cycles again
+loop2:
+    jmp x-- loop2 
+
+.wrap             ; Blink forever!
