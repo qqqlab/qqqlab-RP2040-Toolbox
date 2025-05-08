@@ -17,3 +17,11 @@ Note: Attempting to write more than fits in the buffer will fail, in order to ke
 ## PWM
 
 Minimal Servo / PWM library.
+
+## DshotParallel
+
+PIO library for Dshot ESCs. Can drive up to 8 ESCs with one 4 instruction PIO program.
+
+## SerialPioIrq
+
+PIO library for Serial Port. TX and RX are non-blocking (buffered) and IRQ driven.
