@@ -17,6 +17,7 @@
     Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
+
 #include <SdFat.h>
 extern SdFs sd;
 
@@ -25,6 +26,7 @@ extern SdFs sd;
 #include <class/msc/msc.h>
 #include <device/usbd.h>
 #include <USB.h>
+
 
 FatFSUSBClass FatFSUSB;
 #define USBD_MSC_EPSIZE 64

@@ -41,7 +41,10 @@ Note: Attempting to write more than fits in the buffer will fail, in order to ke
 
 Minimal Servo / PWM library.
 
-
 ### SDCARD-as-USB-memory-stick
 
-Read/write a SDCARD connected to Pico as an USB memory stick (usb msc)
+Read/write a SDCARD connected to Pico as an USB memory stick (usb msc) using the native USB stack - slow 30 kbyte/sec transfer rates
+
+### TinyUSB_msc_sdfat
+
+Read/write a SDCARD connected to Pico as an USB memory stick (usb msc) using the TinyUSB USB stack - much better 600 kbyte/sec transfer rates

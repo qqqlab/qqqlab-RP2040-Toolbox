@@ -21,7 +21,7 @@ Reading: 62.3 KByte/s
 #include <SdFat.h>
 
 //uncomment to use SPI
-#define USE_SPI
+//#define USE_SPI
 
 
 #ifndef USE_SPI
