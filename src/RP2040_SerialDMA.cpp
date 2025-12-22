@@ -33,6 +33,7 @@ SOFTWARE.
 
 #include "RP2040_SerialDMA.h"
 
+
 //global instances
 SerialDMA* SerialDMA::_instances[NUM_UARTS] = {};
 
@@ -54,17 +55,6 @@ void __not_in_flash_func(SerialDMA::_irq_handler()) {
   // tx dma transfer completed, just clear flag
   if( dma_hw->ints0 && (1u << kUartTxChannel) ) {
     dma_hw->ints0 = 1u << kUartTxChannel;
-  }
-
-  // restart tx dma if tx buffer is not empty and dma is not busy 
-  if(tx_dma_index_ != tx_user_index_ && !dma_channel_is_busy(kUartTxChannel)) {
-    uint size = (tx_dma_index_ <= tx_user_index_)
-                    ? (tx_user_index_ - tx_dma_index_)
-                    : (kTxBuffLength + tx_user_index_ - tx_dma_index_);
-    
-    uint8_t* start = &tx_buffer_[tx_dma_index_];
-    dma_channel_transfer_from_buffer_now(kUartTxChannel, start, size);
-    tx_dma_index_ = (tx_dma_index_ + size) & (kTxBuffLength - 1);
   }
 }
 
@@ -107,10 +97,10 @@ void SerialDMA::init_dma() {
   channel_config_set_transfer_data_size(&rx_config, DMA_SIZE_8);
   channel_config_set_read_increment(&rx_config, false);
   channel_config_set_write_increment(&rx_config, true);
-  channel_config_set_ring(&rx_config, true, kRxBuffLengthPow);
+  channel_config_set_ring(&rx_config, true, kRxBuffLengthPow);  //true = write buffer
   channel_config_set_dreq(&rx_config, DREQ_UART0_RX);
   channel_config_set_enable(&rx_config, true);
-  dma_channel_configure(kUartRxChannel, &rx_config, rx_buffer_, &uart0_hw->dr, kRxBuffLength, true);
+  dma_channel_configure(kUartRxChannel, &rx_config, rx_buffer_, &uart0_hw->dr, kRxBuffLength<<8, true);
   dma_channel_set_irq0_enabled(kUartRxChannel, true);
 
   /// DMA uart write
@@ -119,11 +109,11 @@ void SerialDMA::init_dma() {
   channel_config_set_transfer_data_size(&tx_config, DMA_SIZE_8);
   channel_config_set_read_increment(&tx_config, true);
   channel_config_set_write_increment(&tx_config, false);
-  channel_config_set_ring(&tx_config, false, kTxBuffLengthPow);
+  channel_config_set_ring(&tx_config, false, kTxBuffLengthPow); //false = read buffer
   channel_config_set_dreq(&tx_config, DREQ_UART0_TX);
   dma_channel_set_config(kUartTxChannel, &tx_config, false);
   dma_channel_set_write_addr(kUartTxChannel, &uart0_hw->dr, false);
-  dma_channel_set_irq0_enabled(kUartTxChannel, true);
+  dma_channel_set_irq0_enabled(kUartTxChannel, false);
 
   // enable interrupt
   irq_add_shared_handler(DMA_IRQ_0, _SerialDMA_irq_handler, PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
@@ -131,23 +121,20 @@ void SerialDMA::init_dma() {
 }
 
 uint16_t SerialDMA::availableForWrite() {
-  if(tx_dma_index_ <= tx_user_index_) {
-    return kTxBuffLength - 1 + tx_dma_index_ - tx_user_index_;
-  }else{
-    return tx_dma_index_ - tx_user_index_;
-  }
+  return kTxBuffLength - 1 - dma_channel_hw_addr(kUartTxChannel)->transfer_count;
 }
 
 uint16_t SerialDMA::write(const uint8_t* data, uint16_t length) {
   if (length == 0) {
     return 0;
   }
-  uint16_t avail = availableForWrite();
 
+  uint16_t avail = availableForWrite();
   if (length > avail) {
     return 0; // not enough space to write
   }
 
+  //copy to dma buffer
   if ((kTxBuffLength - 1) < tx_user_index_ + length) {
     memcpy(&tx_buffer_[tx_user_index_], data, kTxBuffLength - tx_user_index_);
     memcpy(tx_buffer_, &data[kTxBuffLength - tx_user_index_], length - (kTxBuffLength - tx_user_index_));
@@ -156,33 +143,63 @@ uint16_t SerialDMA::write(const uint8_t* data, uint16_t length) {
   }
   tx_user_index_ = (tx_user_index_ + length) & (kTxBuffLength - 1);
 
-  //start tx dma if not started yet
-  irq_set_pending(DMA_IRQ_0);
+  //check if busy
+  dma_channel_hw_t *hw = dma_channel_hw_addr(kUartTxChannel);
+  uint32_t ctrl = hw->al1_ctrl;
+  bool do_abort = false;
+  if(dma_channel_is_busy(kUartTxChannel)) {
+    hw->al1_ctrl = 0; //EN=0 -> pause the current transfer sequence (i.e. BUSY will remain high if already high)
+    do_abort = true;
+  }
+
+  //update tx_dma_size, tx_dma_index
+  uint32_t bytes_remaining = dma_channel_hw_addr(kUartTxChannel)->transfer_count;
+  uint32_t bytes_written = tx_dma_size - bytes_remaining;
+  tx_dma_size = bytes_remaining + length;
+  tx_dma_index_ = (tx_dma_index_ + bytes_written) & (kTxBuffLength - 1);
+
+  //abort if needed
+  if(do_abort) dma_channel_abort(kUartTxChannel);
+
+  // restart tx dma
+  uint8_t* start = &tx_buffer_[tx_dma_index_];
+  hw->read_addr = (uintptr_t) start;
+  hw->transfer_count = tx_dma_size;
+  hw->ctrl_trig = ctrl;
 
   return length;
 }
 
 uint16_t SerialDMA::available() {
-  if (rx_user_index_ <= rx_dma_index_) {
-    return rx_dma_index_ - rx_user_index_;
+  // use current dma buffer state to calculate available bytes
+  uint16_t rx_dma_index_local = (kRxBuffLength - dma_channel_hw_addr(kUartRxChannel)->transfer_count) & (kRxBuffLength - 1);
+  if (rx_user_index_ <= rx_dma_index_local) {
+    return rx_dma_index_local - rx_user_index_;
   }else{
-    return kTxBuffLength + rx_dma_index_ - rx_user_index_;
+    return kTxBuffLength + rx_dma_index_local - rx_user_index_;
   }
 }
 
 uint16_t SerialDMA::read(uint8_t* data, uint16_t length) {
-  // Update DMA index
-  rx_dma_index_ = kRxBuffLength - dma_channel_hw_addr(kUartRxChannel)->transfer_count;
+  if (length == 0) {
+    return 0;
+  }
 
-  uint16_t avail = available();
+  uint16_t avail;
+  uint16_t rx_dma_index_local = (kRxBuffLength - dma_channel_hw_addr(kUartRxChannel)->transfer_count) & (kRxBuffLength - 1);
+  if (rx_user_index_ <= rx_dma_index_local) {
+    avail = rx_dma_index_local - rx_user_index_;
+  }else{
+    avail = kTxBuffLength + rx_dma_index_local - rx_user_index_;
+  }
+
   if (avail < length) {
     // read as much as we have
     length = avail;
   }
-  
-  if (length == 0) {
-    return 0;
-  }
+
+  // Update DMA index
+  rx_dma_index_ = rx_dma_index_local;
 
   if (rx_user_index_ < rx_dma_index_) {
     memcpy(data, &rx_buffer_[rx_user_index_], length);

@@ -51,13 +51,14 @@ private:
   uint16_t kRxBuffLength; // = 1 << (kRxBuffLengthPow);
   uint16_t kTxBuffLength; // = 1 << (kTxBuffLengthPow);
 
-  uint8_t * rx_buffer_ = nullptr; //needs to alligned! ... static version: __attribute__((aligned(256))) uint8_t rx_buffer_[256];  
+  uint8_t * rx_buffer_ = nullptr; //needs to be aligned! ... static version: __attribute__((aligned(256))) uint8_t rx_buffer_[256];  
   uint16_t rx_user_index_ = 0; // next index to read
   uint16_t rx_dma_index_ = 0;  // next index dma will write
 
-  uint8_t * tx_buffer_ = nullptr; //needs to alligned! ... static version: //__attribute__((aligned(256))) uint8_t tx_buffer_[256];
+  uint8_t * tx_buffer_ = nullptr; //needs to be aligned! ... static version: //__attribute__((aligned(256))) uint8_t tx_buffer_[256];
   uint16_t tx_user_index_ = 0;  // next index to write
-  uint16_t tx_dma_index_ = 0;  // next index dma will read 
+  uint16_t tx_dma_index_ = 0;  // next index dma will read
+  uint16_t tx_dma_size = 0; // size of current dma transfer
 
   void init_dma();
   uint8_t log_2(uint16_t val);
