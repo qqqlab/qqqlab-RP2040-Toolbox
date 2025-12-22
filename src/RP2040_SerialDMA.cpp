@@ -148,21 +148,11 @@ uint16_t SerialDMA::write(const uint8_t* data, uint16_t length) {
     return 0; // not enough space to write
   }
 
-  if (tx_dma_index_ < tx_user_index_) {
-    if ((kTxBuffLength - 1) < tx_user_index_ + length) {
-      memcpy(&tx_buffer_[tx_user_index_], data, kTxBuffLength - tx_user_index_);
-      memcpy(tx_buffer_, &data[kTxBuffLength - tx_user_index_], length - (kTxBuffLength - tx_user_index_));
-    } else {
-      memcpy(&tx_buffer_[tx_user_index_], data, length);
-    }
-
+  if ((kTxBuffLength - 1) < tx_user_index_ + length) {
+    memcpy(&tx_buffer_[tx_user_index_], data, kTxBuffLength - tx_user_index_);
+    memcpy(tx_buffer_, &data[kTxBuffLength - tx_user_index_], length - (kTxBuffLength - tx_user_index_));
   } else {
-    if ((kTxBuffLength - 1) < tx_user_index_ + length) {
-      memcpy(&tx_buffer_[tx_user_index_], data, kTxBuffLength - tx_user_index_);
-      memcpy(tx_buffer_, &data[kTxBuffLength - tx_user_index_], length - (kTxBuffLength - tx_user_index_));
-    } else {
-      memcpy(&tx_buffer_[tx_user_index_], data, length);
-    }
+    memcpy(&tx_buffer_[tx_user_index_], data, length);
   }
   tx_user_index_ = (tx_user_index_ + length) & (kTxBuffLength - 1);
 
