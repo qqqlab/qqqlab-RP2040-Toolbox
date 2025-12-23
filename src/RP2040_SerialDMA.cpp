@@ -66,7 +66,34 @@ void SerialDMA::setBaud(uint32_t baudrate) {
 }
 
 void SerialDMA::init_dma() {
-  /// DMA uart read
+#if PICO_RP2040
+  // RP2040 does not have self trigger, use second dma channel to re-trigger rx channel
+  // DMA uart read
+  rx_dma_ch = dma_claim_unused_channel(true);
+  rx_ctrl_dma_ch = dma_claim_unused_channel(true);
+
+  // DMA control to re-trigger uart read channel (performs dummy 1 byte transfer from rx_ctrl_dummy_read to rx_ctrl_dummy_write)
+  dma_channel_config ctrl_config = dma_channel_get_default_config(rx_ctrl_dma_ch);
+  channel_config_set_transfer_data_size(&ctrl_config, DMA_SIZE_8);
+  channel_config_set_read_increment(&ctrl_config, false);
+  channel_config_set_write_increment(&ctrl_config, false);
+  channel_config_set_chain_to(&ctrl_config, rx_dma_ch);
+  channel_config_set_enable(&ctrl_config, true);
+  dma_channel_configure(rx_ctrl_dma_ch, &ctrl_config, &rx_ctrl_dummy_write, &rx_ctrl_dummy_read, 1, false);
+
+  // DMA uart read
+  dma_channel_config rx_config = dma_channel_get_default_config(rx_dma_ch);
+  channel_config_set_transfer_data_size(&rx_config, DMA_SIZE_8);
+  channel_config_set_read_increment(&rx_config, false);
+  channel_config_set_write_increment(&rx_config, true);
+  channel_config_set_ring(&rx_config, true, rx_buf_len_pow);  //true = write buffer
+  channel_config_set_dreq(&rx_config, DREQ_UART0_RX);
+  channel_config_set_chain_to(&rx_config, rx_ctrl_dma_ch);
+  channel_config_set_enable(&rx_config, true);
+  dma_channel_configure(rx_dma_ch, &rx_config, rx_buf, &uart0_hw->dr, rx_buf_len << 16, true); // note: rx_buf_len<<16 to fill buffer 65356 times before chaining to ctrl_ch (remove <<16 to test chaining)
+#else
+  // RP2350 has self trigger
+  // DMA uart read
   rx_dma_ch = dma_claim_unused_channel(true);
   dma_channel_config rx_config = dma_channel_get_default_config(rx_dma_ch);
   channel_config_set_transfer_data_size(&rx_config, DMA_SIZE_8);
@@ -77,6 +104,7 @@ void SerialDMA::init_dma() {
   channel_config_set_enable(&rx_config, true);
   dma_channel_configure(rx_dma_ch, &rx_config, rx_buf, &uart0_hw->dr, dma_encode_transfer_count_with_self_trigger(rx_buf_len), true);
   dma_channel_set_irq0_enabled(rx_dma_ch, false);
+#endif
 
   /// DMA uart write
   tx_dma_ch = dma_claim_unused_channel(true);  
@@ -88,7 +116,6 @@ void SerialDMA::init_dma() {
   channel_config_set_dreq(&tx_config, DREQ_UART0_TX);
   dma_channel_set_config(tx_dma_ch, &tx_config, false);
   dma_channel_set_write_addr(tx_dma_ch, &uart0_hw->dr, false);
-  dma_channel_set_irq0_enabled(tx_dma_ch, false);
 }
 
 uint16_t SerialDMA::availableForWrite() {

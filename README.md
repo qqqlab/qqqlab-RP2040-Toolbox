@@ -31,6 +31,10 @@ A minimal replacement for Arduino HardwareSerial class, uses DMA buffers for bot
 
 Note: Attempting to write more than fits in the buffer will fail, in order to keep the driver non-blocking in all cases. The regular [pico-arduino](https://github.com/earlephilhower/arduino-pico) SerialUART and SerialPIO libraries have small write buffers and block when writing more than fits in this buffer.
 
+This is a DMA only implementation, no interrupts are used.
+
+Used Resources for full duplex uart: 2 DMA channels on RP2350 / 3 DMA channels on RP2040
+
 ## SerialIRQ
 
 A minimal replacement for Arduino HardwareSerial class, uses IRQ and ring buffers for both RX and TX to enable non-blocking reads and writes. 

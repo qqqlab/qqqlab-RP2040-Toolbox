@@ -39,6 +39,11 @@ public:
 private:
   uart_inst_t* uart_ = nullptr;
 
+#if PICO_RP2040
+  uint8_t rx_ctrl_dma_ch;
+  uint8_t rx_ctrl_dummy_read;
+  uint8_t rx_ctrl_dummy_write;
+#endif
   uint8_t rx_dma_ch;
   uint8_t rx_buf_len_pow; // = 8; //2^8 = 256 bytes
   uint16_t rx_buf_len; // = 1 << (rx_buf_len_pow);
