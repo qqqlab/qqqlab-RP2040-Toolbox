@@ -34,11 +34,11 @@ SOFTWARE.
 #include "RP2040_SerialDMA.h"
 
 
-void SerialDMA::begin(uint8_t uart_num, uint32_t baudrate, uint8_t txpin, uint8_t rxpin, uint16_t txbuflen, uint16_t rxbuflen) {
+uint32_t SerialDMA::begin(uint8_t uart_num, uint32_t baudrate, uint8_t txpin, uint8_t rxpin, uint16_t txbuflen, uint16_t rxbuflen) {
   uart_ = UART_INSTANCE(uart_num);
   gpio_set_function(txpin, GPIO_FUNC_UART);
   gpio_set_function(rxpin, GPIO_FUNC_UART);
-  setBaud(baudrate);
+  uint32_t actual_baud = setBaud(baudrate);
 
   rx_buf_len_pow = log_2(rxbuflen);
   tx_buf_len_pow = log_2(txbuflen);
@@ -48,6 +48,8 @@ void SerialDMA::begin(uint8_t uart_num, uint32_t baudrate, uint8_t txpin, uint8_
   tx_buf = (uint8_t*)aligned_alloc(tx_buf_len, tx_buf_len);
 
   init_dma();
+
+  return actual_baud;
 }
 
 //round up to next power of two: 255->8, 256->8, 257->9
@@ -61,8 +63,8 @@ uint8_t SerialDMA::log_2(uint16_t val) {
   return i;
 }
 
-void SerialDMA::setBaud(uint32_t baudrate) {
-  uart_init(uart_, baudrate);
+uint32_t SerialDMA::setBaud(uint32_t baudrate) {
+  return uart_init(uart_, baudrate);
 }
 
 void SerialDMA::init_dma() {

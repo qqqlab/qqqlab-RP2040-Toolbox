@@ -29,8 +29,8 @@ SOFTWARE.
 class SerialDMA {
 public:
   //buffer size has to be a power of two, will be rounded up to next greater value: i.e. 128->128, 129->256
-  void begin(uint8_t uart_num, uint32_t baudrate, uint8_t txpin, uint8_t rxpin, uint16_t txbuflen, uint16_t rxbuflen);
-  void setBaud(uint32_t baudrate); //call this after begin to change baud rate
+  uint32_t begin(uint8_t uart_num, uint32_t baudrate, uint8_t txpin, uint8_t rxpin, uint16_t txbuflen, uint16_t rxbuflen); //returns actual baud rate
+  uint32_t setBaud(uint32_t baudrate); //call this after begin to change baud rate, returns actual baud rate
   uint16_t write(const uint8_t* data, uint16_t length);
   uint16_t read(uint8_t* data, uint16_t length);
   uint16_t available();
