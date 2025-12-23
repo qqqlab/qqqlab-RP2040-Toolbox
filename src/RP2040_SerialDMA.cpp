@@ -34,43 +34,18 @@ SOFTWARE.
 #include "RP2040_SerialDMA.h"
 
 
-//global instances
-SerialDMA* SerialDMA::_instances[NUM_UARTS] = {};
-
-//global interrupt handler
-void __not_in_flash_func(_SerialDMA_irq_handler()) {
-  for(uint8_t i=0;i<NUM_UARTS;i++) {
-    if(SerialDMA::_instances[i]) SerialDMA::_instances[i]->_irq_handler();
-  }
-}
-
-//class instance interrupt handler
-void __not_in_flash_func(SerialDMA::_irq_handler()) {
-  // rx dma transfer completed
-  if( dma_hw->ints0 && (1u << kUartRxChannel) ) {
-    dma_hw->ints0 = 1u << kUartRxChannel;
-    dma_channel_set_trans_count(kUartRxChannel, kRxBuffLength, true);
-  }
-
-  // tx dma transfer completed, just clear flag
-  if( dma_hw->ints0 && (1u << kUartTxChannel) ) {
-    dma_hw->ints0 = 1u << kUartTxChannel;
-  }
-}
-
 void SerialDMA::begin(uint8_t uart_num, uint32_t baudrate, uint8_t txpin, uint8_t rxpin, uint16_t txbuflen, uint16_t rxbuflen) {
   uart_ = UART_INSTANCE(uart_num);
-  _instances[uart_num] = this;
   gpio_set_function(txpin, GPIO_FUNC_UART);
   gpio_set_function(rxpin, GPIO_FUNC_UART);
   setBaud(baudrate);
 
-  kRxBuffLengthPow = log_2(rxbuflen);
-  kTxBuffLengthPow = log_2(txbuflen);
-  kRxBuffLength = 1 << (kRxBuffLengthPow);
-  kTxBuffLength = 1 << (kTxBuffLengthPow);
-  rx_buffer_ = (uint8_t*)aligned_alloc(kRxBuffLength, kRxBuffLength);
-  tx_buffer_ = (uint8_t*)aligned_alloc(kTxBuffLength, kTxBuffLength);
+  rx_buf_len_pow = log_2(rxbuflen);
+  tx_buf_len_pow = log_2(txbuflen);
+  rx_buf_len = 1 << (rx_buf_len_pow);
+  tx_buf_len = 1 << (tx_buf_len_pow);
+  rx_buf = (uint8_t*)aligned_alloc(rx_buf_len, rx_buf_len);
+  tx_buf = (uint8_t*)aligned_alloc(tx_buf_len, tx_buf_len);
 
   init_dma();
 }
@@ -92,36 +67,32 @@ void SerialDMA::setBaud(uint32_t baudrate) {
 
 void SerialDMA::init_dma() {
   /// DMA uart read
-  kUartRxChannel = dma_claim_unused_channel(true);
-  dma_channel_config rx_config = dma_channel_get_default_config(kUartRxChannel);
+  rx_dma_ch = dma_claim_unused_channel(true);
+  dma_channel_config rx_config = dma_channel_get_default_config(rx_dma_ch);
   channel_config_set_transfer_data_size(&rx_config, DMA_SIZE_8);
   channel_config_set_read_increment(&rx_config, false);
   channel_config_set_write_increment(&rx_config, true);
-  channel_config_set_ring(&rx_config, true, kRxBuffLengthPow);  //true = write buffer
+  channel_config_set_ring(&rx_config, true, rx_buf_len_pow);  //true = write buffer
   channel_config_set_dreq(&rx_config, DREQ_UART0_RX);
   channel_config_set_enable(&rx_config, true);
-  dma_channel_configure(kUartRxChannel, &rx_config, rx_buffer_, &uart0_hw->dr, kRxBuffLength<<8, true);
-  dma_channel_set_irq0_enabled(kUartRxChannel, true);
+  dma_channel_configure(rx_dma_ch, &rx_config, rx_buf, &uart0_hw->dr, dma_encode_transfer_count_with_self_trigger(rx_buf_len), true);
+  dma_channel_set_irq0_enabled(rx_dma_ch, false);
 
   /// DMA uart write
-  kUartTxChannel = dma_claim_unused_channel(true);  
-  dma_channel_config tx_config = dma_channel_get_default_config(kUartTxChannel);
+  tx_dma_ch = dma_claim_unused_channel(true);  
+  dma_channel_config tx_config = dma_channel_get_default_config(tx_dma_ch);
   channel_config_set_transfer_data_size(&tx_config, DMA_SIZE_8);
   channel_config_set_read_increment(&tx_config, true);
   channel_config_set_write_increment(&tx_config, false);
-  channel_config_set_ring(&tx_config, false, kTxBuffLengthPow); //false = read buffer
+  channel_config_set_ring(&tx_config, false, tx_buf_len_pow); //false = read buffer
   channel_config_set_dreq(&tx_config, DREQ_UART0_TX);
-  dma_channel_set_config(kUartTxChannel, &tx_config, false);
-  dma_channel_set_write_addr(kUartTxChannel, &uart0_hw->dr, false);
-  dma_channel_set_irq0_enabled(kUartTxChannel, false);
-
-  // enable interrupt
-  irq_add_shared_handler(DMA_IRQ_0, _SerialDMA_irq_handler, PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
-  irq_set_enabled(DMA_IRQ_0, true);
+  dma_channel_set_config(tx_dma_ch, &tx_config, false);
+  dma_channel_set_write_addr(tx_dma_ch, &uart0_hw->dr, false);
+  dma_channel_set_irq0_enabled(tx_dma_ch, false);
 }
 
 uint16_t SerialDMA::availableForWrite() {
-  return kTxBuffLength - 1 - dma_channel_hw_addr(kUartTxChannel)->transfer_count;
+  return tx_buf_len - 1 - dma_channel_hw_addr(tx_dma_ch)->transfer_count;
 }
 
 uint16_t SerialDMA::write(const uint8_t* data, uint16_t length) {
@@ -135,34 +106,34 @@ uint16_t SerialDMA::write(const uint8_t* data, uint16_t length) {
   }
 
   //copy to dma buffer
-  if ((kTxBuffLength - 1) < tx_user_index_ + length) {
-    memcpy(&tx_buffer_[tx_user_index_], data, kTxBuffLength - tx_user_index_);
-    memcpy(tx_buffer_, &data[kTxBuffLength - tx_user_index_], length - (kTxBuffLength - tx_user_index_));
+  if ((tx_buf_len - 1) < tx_user_idx + length) {
+    memcpy(&tx_buf[tx_user_idx], data, tx_buf_len - tx_user_idx);
+    memcpy(tx_buf, &data[tx_buf_len - tx_user_idx], length - (tx_buf_len - tx_user_idx));
   } else {
-    memcpy(&tx_buffer_[tx_user_index_], data, length);
+    memcpy(&tx_buf[tx_user_idx], data, length);
   }
-  tx_user_index_ = (tx_user_index_ + length) & (kTxBuffLength - 1);
+  tx_user_idx = (tx_user_idx + length) & (tx_buf_len - 1);
 
   //check if busy
-  dma_channel_hw_t *hw = dma_channel_hw_addr(kUartTxChannel);
+  dma_channel_hw_t *hw = dma_channel_hw_addr(tx_dma_ch);
   uint32_t ctrl = hw->al1_ctrl;
   bool do_abort = false;
-  if(dma_channel_is_busy(kUartTxChannel)) {
+  if(dma_channel_is_busy(tx_dma_ch)) {
     hw->al1_ctrl = 0; //EN=0 -> pause the current transfer sequence (i.e. BUSY will remain high if already high)
     do_abort = true;
   }
 
   //update tx_dma_size, tx_dma_index
-  uint32_t bytes_remaining = dma_channel_hw_addr(kUartTxChannel)->transfer_count;
+  uint32_t bytes_remaining = dma_channel_hw_addr(tx_dma_ch)->transfer_count;
   uint32_t bytes_written = tx_dma_size - bytes_remaining;
   tx_dma_size = bytes_remaining + length;
-  tx_dma_index_ = (tx_dma_index_ + bytes_written) & (kTxBuffLength - 1);
+  tx_dma_idx = (tx_dma_idx + bytes_written) & (tx_buf_len - 1);
 
   //abort if needed
-  if(do_abort) dma_channel_abort(kUartTxChannel);
+  if(do_abort) dma_channel_abort(tx_dma_ch);
 
   // restart tx dma
-  uint8_t* start = &tx_buffer_[tx_dma_index_];
+  uint8_t* start = &tx_buf[tx_dma_idx];
   hw->read_addr = (uintptr_t) start;
   hw->transfer_count = tx_dma_size;
   hw->ctrl_trig = ctrl;
@@ -171,12 +142,13 @@ uint16_t SerialDMA::write(const uint8_t* data, uint16_t length) {
 }
 
 uint16_t SerialDMA::available() {
-  // use current dma buffer state to calculate available bytes
-  uint16_t rx_dma_index_local = (kRxBuffLength - dma_channel_hw_addr(kUartRxChannel)->transfer_count) & (kRxBuffLength - 1);
-  if (rx_user_index_ <= rx_dma_index_local) {
-    return rx_dma_index_local - rx_user_index_;
+  //update buffer tail
+  uint16_t rx_dma_idx = (rx_buf_len - dma_channel_hw_addr(rx_dma_ch)->transfer_count) & (rx_buf_len - 1);
+  
+  if (rx_user_idx <= rx_dma_idx) {
+    return rx_dma_idx - rx_user_idx;
   }else{
-    return kTxBuffLength + rx_dma_index_local - rx_user_index_;
+    return tx_buf_len + rx_dma_idx - rx_user_idx;
   }
 }
 
@@ -185,35 +157,25 @@ uint16_t SerialDMA::read(uint8_t* data, uint16_t length) {
     return 0;
   }
 
-  uint16_t avail;
-  uint16_t rx_dma_index_local = (kRxBuffLength - dma_channel_hw_addr(kUartRxChannel)->transfer_count) & (kRxBuffLength - 1);
-  if (rx_user_index_ <= rx_dma_index_local) {
-    avail = rx_dma_index_local - rx_user_index_;
-  }else{
-    avail = kTxBuffLength + rx_dma_index_local - rx_user_index_;
-  }
-
+  uint16_t avail = available();
   if (avail < length) {
     // read as much as we have
     length = avail;
   }
 
-  // Update DMA index
-  rx_dma_index_ = rx_dma_index_local;
-
-  if (rx_user_index_ < rx_dma_index_) {
-    memcpy(data, &rx_buffer_[rx_user_index_], length);
+  if (rx_user_idx < rx_dma_idx) {
+    memcpy(data, &rx_buf[rx_user_idx], length);
   } else {
-    uint16_t left = kRxBuffLength - rx_user_index_;
+    uint16_t left = rx_buf_len - rx_user_idx;
     if (length < left) {
       left = length; // limit to target buffer size
     }
-    memcpy(data, &rx_buffer_[rx_user_index_], left);
+    memcpy(data, &rx_buf[rx_user_idx], left);
     if (left < length) {
-      memcpy(&data[left], rx_buffer_, length - left);
+      memcpy(&data[left], rx_buf, length - left);
     }
   }
-  rx_user_index_ = (rx_user_index_ + length) & (kRxBuffLength - 1);
+  rx_user_idx = (rx_user_idx + length) & (rx_buf_len - 1);
 
   return length;
 }

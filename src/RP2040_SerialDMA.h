@@ -27,8 +27,6 @@ SOFTWARE.
 #pragma once
 
 class SerialDMA {
-  friend void _SerialDMA_irq_handler(); // allow C-language IRQ handler access to private SerialDMA::_irq_handler()
-
 public:
   //buffer size has to be a power of two, will be rounded up to next greater value: i.e. 128->128, 129->256
   void begin(uint8_t uart_num, uint32_t baudrate, uint8_t txpin, uint8_t rxpin, uint16_t txbuflen, uint16_t rxbuflen);
@@ -39,25 +37,21 @@ public:
   uint16_t availableForWrite();
 
 private:
-  static SerialDMA* _instances[NUM_UARTS];
-  void _irq_handler();
-
   uart_inst_t* uart_ = nullptr;
-  uint8_t kUartRxChannel;
-  uint8_t kUartTxChannel;
 
-  uint8_t kRxBuffLengthPow; // = 8; //2^8 = 256 bytes
-  uint8_t kTxBuffLengthPow; // = 8; //2^8 = 256 bytes
-  uint16_t kRxBuffLength; // = 1 << (kRxBuffLengthPow);
-  uint16_t kTxBuffLength; // = 1 << (kTxBuffLengthPow);
+  uint8_t rx_dma_ch;
+  uint8_t rx_buf_len_pow; // = 8; //2^8 = 256 bytes
+  uint16_t rx_buf_len; // = 1 << (rx_buf_len_pow);
+  uint8_t * rx_buf = nullptr; //needs to be aligned! ... static version: __attribute__((aligned(256))) uint8_t rx_buf[256];  
+  uint16_t rx_user_idx = 0; // next index to read
+  uint16_t rx_dma_idx = 0;  // next index dma will write
 
-  uint8_t * rx_buffer_ = nullptr; //needs to be aligned! ... static version: __attribute__((aligned(256))) uint8_t rx_buffer_[256];  
-  uint16_t rx_user_index_ = 0; // next index to read
-  uint16_t rx_dma_index_ = 0;  // next index dma will write
-
-  uint8_t * tx_buffer_ = nullptr; //needs to be aligned! ... static version: //__attribute__((aligned(256))) uint8_t tx_buffer_[256];
-  uint16_t tx_user_index_ = 0;  // next index to write
-  uint16_t tx_dma_index_ = 0;  // next index dma will read
+  uint8_t tx_dma_ch;
+  uint8_t tx_buf_len_pow; // = 8; //2^8 = 256 bytes
+  uint16_t tx_buf_len; // = 1 << (tx_buf_len_pow);
+  uint8_t * tx_buf = nullptr; //needs to be aligned! ... static version: //__attribute__((aligned(256))) uint8_t tx_buf[256];
+  uint16_t tx_user_idx = 0;  // next index to write
+  uint16_t tx_dma_idx = 0;  // next index dma will read
   uint16_t tx_dma_size = 0; // size of current dma transfer
 
   void init_dma();

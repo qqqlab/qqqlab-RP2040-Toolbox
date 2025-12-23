@@ -39,7 +39,6 @@ void loop() {
   uint16_t num_bytes = serDma.read(buf, sizeof(buf));
   dt2 = micros() - dt2;
 
-
   Serial.printf("iter:%d\t", (int)iter);
   Serial.printf("wlen:%d\t", (int)wlen);
   Serial.printf("tx:%dus\t", (int)dt1);
